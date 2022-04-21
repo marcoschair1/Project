@@ -1,0 +1,146 @@
+---
+title: "SpotifyAnalysis"
+author: "Cesar Valenzuela"
+date: "April 13, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages
+
+```{r}
+library(dplyr)
+library(spotifyr)
+library(plotly)
+library(ggplot2)
+library(shiny)
+library(shinydashboard)
+library(maps)
+library(ggiraph)
+library(DT)
+```
+
+## Connection to Spotify's API
+
+```{r}
+
+id  = 'af1557e4ac604073aef8a63a376da264'
+secret = 'f671186c17a742e7b263b42af196870b'
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+access_token = get_spotify_access_token()
+```
+
+## Collecting Data using spotifyr
+
+Created two spotify playlists in which one contains every grammy Song of the Year winner from the 1st to the 62nd grammy and the other with every Song of the Year nominee,
+excluding the winner, from the 1st to the 62nd grammy. We found this information from the following websites which one contains an archive of every winner and nominee from every
+grammy and the other from the official grammy websites only containing the grammy winners and the 2021 nominees: http://www.rockonthenet.com/grammy/song.htm and
+https://www.grammy.com/grammys/awards. However a few tracks were not accessible on spotify which all belonged in the nominee playlists and were left out. 
+
+
+```{r}
+my_id = "cesar.valenzuela2"
+my_playlists = get_user_playlists(my_id)
+
+# Dataframe for both winning tracks and losing tracks. Split song of the year losers into 3 separate playlists since the function get_playlists_tracks only allows 100 tracks per playlists
+
+my_playlists = my_playlists %>% filter(name %in% c('Song of the year winners','Song of the year losers 1','Song of the year losers 2','Song of the year losers 3','2021 Nominees'))
+
+winner_tracks = data.frame()
+loser_tracks = data.frame()
+
+winner_tracks = get_playlist_tracks(my_playlists[1,4])
+loser_tracks = get_playlist_tracks(my_playlists[2,4])
+loser_tracks = rbind(loser_tracks, get_playlist_tracks(my_playlists[3,4]))
+loser_tracks = rbind(loser_tracks, get_playlist_tracks(my_playlists[4,4]))
+
+winner_features = data.frame()
+loser_features = data.frame()
+
+winner_features = get_track_audio_features(winner_tracks[,'track.id'])
+loser_features = get_track_audio_features(loser_tracks[1:100,'track.id'])
+loser_features = rbind(loser_features, get_track_audio_features(loser_tracks[101:200,'track.id']))
+loser_features = rbind(loser_features, get_track_audio_features(loser_tracks[201:nrow(loser_tracks),'track.id']))
+
+winner_track_artist = c()
+for(i in 1:nrow(winner_tracks)){
+  winner_track_artist[i] = winner_tracks$track.album.artists[[i]]$name
+}
+
+loser_track_artist = c()
+for(i in 1:nrow(loser_tracks)){
+  loser_track_artist[i] = loser_tracks$track.album.artists[[i]]$name
+}
+
+grammy.year = c(1958:2020)
+winner_features = cbind(track.name = winner_tracks$track.name, artist.name = winner_track_artist, grammy.year, winner_features, grammy.win = 1)
+
+# Created a csv file to add in the corresponding year for the grammy nomination gathered from the previous websites mentioned
+loser_features = cbind(track.name = loser_tracks$track.name, artist.name = loser_track_artist, loser_features, grammy.win = 0)
+write.csv(loser_features, file = "loser.csv", row.names = FALSE)
+loser_features = read.csv("loser_features.csv")
+
+# Dataframe for the 64th Grammy's Song of the Year nominees
+
+nominee_tracks = get_playlist_tracks(my_playlists[5,4])
+nominee_features = data.frame()
+nominee_features = get_track_audio_features(nominee_tracks[,'track.id'])
+nominee_track_artist = c()
+for(i in 1:nrow(nominee_tracks)){
+  nominee_track_artist[i] = nominee_tracks$track.album.artists[[i]]$name
+}
+nominee_features = cbind(track.name = nominee_tracks$track.name, artist.name = nominee_track_artist, grammy.year = 2021, nominee_features)
+
+```
+
+Global Map and tables for tracks in different countries' top charts using shiny
+
+```{r}
+spotify_id = "spotifycharts"
+spotify_playlists = get_user_playlists(spotify_id)
+
+Top_Songs_Global    <- list(id="37i9dQZEVXbNG2KDcFcKOF", 
+                            name="Top Songs Global")
+Top_Songs_USA       <- list(id="37i9dQZEVXbLp5XoPON0wI", 
+                            name="Top Songs USA")
+Top_Songs_Australia <- list(id="37i9dQZEVXbK4fwx2r07XW", 
+                            name="Top Songs Australia")
+Top_Songs_Japan     <- list(id="37i9dQZEVXbKqiTGXuCOsB", 
+                            name="Top Songs Japan")
+Top_Songs_Italy     <- list(id="37i9dQZEVXbJUPkgaWZcWG", 
+                            name="Top Songs Italy")
+
+Top_Songs <- list(ids=c(Top_Songs_Global$id, Top_Songs_USA$id, Top_Songs_Australia$id, Top_Songs_Japan$id, Top_Songs_Italy$id),
+                  names=c(Top_Songs_Global$name, Top_Songs_USA$name, Top_Songs_Australia$name, Top_Songs_Japan$name, Top_Songs_Italy$name))
+
+top_playlists_features <- get_playlist_audio_features(spotify_id, Top_Songs$ids)
+
+#regions = map_data("world",region = c("USA","Australia","Japan","Italy"))
+#ggplot(regions, aes(x = long, y = lat, group = group, fill = region)) +
+#  geom_polygon(colour = "black") +
+#  scale_fill_brewer(palette = "Set2")
+
+shinyApp(
+  ui=fluidPage(
+    dataTableOutput('table')
+  ),
+  
+  server = function(input,output) {
+    output$table = renderDataTable({
+      top_playlists_features
+    },
+    filter = 'top',
+    rownames = FALSE)
+  }
+)
+
+```
+
+
+
+
+

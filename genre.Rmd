@@ -1,0 +1,230 @@
+---
+title: "Genre R"
+author: "Marcos Hernandez"
+date: "3/12/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(spotifyr)
+library(ggplot2)
+library(plotly)
+library(class)
+library(caret)
+library(mlbench)
+```
+The data here was selected from Every Noise and the code was acquire it can be found [here on Github](https://github.com/walkerkq/spotify_genre_classification)
+```{r}
+get_track_audio_features_over_100 <- function(ids) {
+  
+  ## spotifyr limits get_track_audio_features to 100 at a time
+  ## this function loops through the full id list
+  
+  ids <- ids[!is.na(ids)]
+  len <- length(ids)
+  repetitions <- floor(len/100) * 100
+  intervals <- c(seq(from = 0, to = repetitions, by = 100), len)
+  
+  features <- data.frame()
+  for(r in seq_along(intervals)){
+    start <- intervals[r]
+    end <- intervals[r + 1] - 1
+    if(is.na(end)) break
+    
+    inner_features <- get_track_audio_features(ids = ids[start:end])
+    features <- rbind(features, inner_features)
+    
+  }
+  
+  return(features)
+  
+}
+id = "283d0130ba99451897e68169e7931c9d"
+secret = "742f846665a0411582acb0f41e8a933c"
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+access_token = get_spotify_access_token()
+# Get a list of genre-specific playlists
+genres <- c('pop', 'r&b', 'rap', 'latin', 'rock', 'edm')
+### every noise
+# http://everynoise.com/everynoise1d.cgi?root=edm
+subgenres <- data.frame(genre = c(rep('pop',4), rep('rap',4), rep('rock',4), rep('latin',4), rep('r&b',4), rep('edm',4)),
+                      subgenre = c('dance pop', 'post-teen pop', 'electropop', 'pop', 
+                                    'hip hop', 'rap', 'gangster rap', 'trap', 
+                                    'album rock', 'classic rock', 'permanent wave', 'rock',
+                                    'tropical', 'latin pop', 'reggaeton', 'latin', 
+                                    'urban contemporary', 'hip pop', 'r&b', 'soul',
+                                    'electro house', 'big room', 'pop edm', 'edm'),
+                      stringsAsFactors = FALSE)
+
+playlist_ids <- NULL
+
+for(g in seq_along(subgenres$subgenre)){
+  
+  out <- search_spotify(q = subgenres$subgenre[g], type = 'playlist', limit = 20)
+  out <- out %>% 
+    select(name, id) %>%
+    mutate(subgenre = subgenres$subgenre[g],
+           genre = subgenres$genre[g])
+  
+  playlist_ids <- rbind(playlist_ids, out)
+  
+}
+
+# get the track ids
+playlist_songs <- NULL
+
+for(p in seq_along(playlist_ids$id)){
+  
+  out <- get_playlist_tracks(playlist_id = playlist_ids$id[p])
+  
+  out <- out %>%
+    filter(!is.na(track.id)) %>%
+    # separate out the df column artists
+    unnest(cols = 'track.artists') %>%
+    group_by(track.id) %>%
+    mutate(row_number = 1:n(),
+           track.artist = name) %>%
+    ungroup() %>%
+    filter(row_number == 1) %>%
+    select(track.id, track.name, track.artist, track.popularity, track.album.id, track.album.name, track.album.release_date) %>%
+    mutate(playlist_name = playlist_ids$name[p],
+           playlist_id = playlist_ids$id[p],
+           playlist_genre = playlist_ids$genre[p],
+           playlist_subgenre = playlist_ids$subgenre[p]) 
+  
+  playlist_songs <- rbind(playlist_songs, out)
+  
+}
+
+# get track audio features
+playlist_audio <- get_track_audio_features_over_100(ids = playlist_songs$track.id)
+
+# combine
+playlist_songs <- playlist_songs %>%
+  left_join(select(playlist_audio, -track_href, -uri, -analysis_url, -type, -time_signature), by = c('track.id' = 'id')) %>%
+  unique() %>%
+  filter(!is.na(danceability))
+
+# handle duplicates - songs on multiple playlists
+playlist_songs <- playlist_songs %>% 
+  group_by(playlist_genre, playlist_subgenre, track.id) %>%
+  mutate(row_number = 1:n()) %>%
+  filter(row_number == 1) %>%
+  ungroup() %>%
+  select(-row_number)
+
+write.csv(playlist_songs, 'popularity_songs.csv', row.names=FALSE)
+
+
+```
+Now that we have our csv file, we begin by filtering outliers. 
+```{r}
+duration_outliers <- boxplot(playlist_songs$duration_ms,plot = FALSE, range = 4)$out
+##removed outlier songs that are too long
+playlist_songs_no_outliers <- playlist_songs %>%
+  filter(!duration_ms %in% duration_outliers)
+playlist_songs_no_outliers <- playlist_songs_no_outliers %>%
+  filter(!track.popularity <3)
+```
+We will now analyze the correlation between the features to eliminate redundancy.
+
+This code is found on [here](https://www.kaylinpavlik.com/classifying-songs-genres/)
+```{r}
+library(corrplot)
+feature_names <- names(playlist_songs)[c(4,12:23)]
+playlist_songs_no_outliers %>%
+  select(feature_names) %>%
+  scale() %>%
+  cor() %>%
+  corrplot::corrplot(method = 'color', 
+                     order = 'hclust', 
+                     type = 'lower', 
+                     diag = FALSE, 
+                     tl.col = 'black',
+                     addCoef.col = "grey30",
+                     number.cex = .6,
+                     col = colorRampPalette(colors = c(
+                       'red', 
+                       'white', 
+                       'green'))(200),
+                     main = 'Audio Feature Correlation',
+                     mar = c(2,2,2,2))
+```
+
+The only concerning one seems to be the positive correlation between energy and loudness. We will set a random seed, remove the loudness feature, and begin to separate our data into training and testing subsets.
+```{r}
+set.seed(2021) ##setting seed for sample
+playlist_features = playlist_songs_no_outliers[,c(4,10,12:14,16:23)]
+dat.d = sample(1:nrow(playlist_features),size = nrow(playlist_features)*.8,replace = FALSE)## random selection of 80 %
+train.all = as.numeric(playlist_features[dat.d,]) ##training 80% of data
+test.all = as.numeric(playlist_features[-dat.d,])# remaining data
+
+```
+Our first method of analysis will be a decision tree. Using the rpart and rpart.plot packages, we can begin to train the model.
+```{r}
+library(rpart)
+library(rpart.plot)
+fit <- rpart(playlist_genre~., data = train.all, method = 'class')
+rpart.plot(fit,type=5,box.palette = 'YlGnBl', fallen.leaves =FALSE,extra = 104,cex = .4,tweak = 1.25)
+```
+
+```{r}
+predictions <-predict(fit, test.all, type = 'class')
+table_mat = table(test.all$playlist_genre,predictions)
+table_mat
+```
+
+```{r}
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+print(paste('Accuracy for test', accuracy_Test))
+```
+
+```{r}
+##Normalize in order to eliminate Bias
+normalize = function(x){
+  return ((x-min(x))/(max(x)-min(x))) }
+all.subset.normal = as.data.frame(lapply(playlist_songs_no_outliers[,c(4,12:14,16:23)],normalize))
+train.all = all.subset.normal[dat.d,] ##training 80% of data
+test.all = all.subset.normal[-dat.d,]# remaining data
+train.labels = playlist_songs_no_outliers[dat.d,10]$playlist_genre
+test.labels =playlist_songs_no_outliers[-dat.d,10]$playlist_genre
+train.labels= as.factor(train.labels)
+test.labels =as.factor(test.labels)
+```
+
+```{r}
+i= 1
+k.optm =NULL
+for(i in 1:85){
+  knn.mod = knn(train.all,test.all,train.labels,k=i)
+  k.optm[i] = 100* sum(test.labels == knn.mod)/NROW(test.labels)
+  k=i
+  cat(k,'=',k.optm[i],'\n')
+}
+
+plot(k.optm,type='b',xlab = "K-Value",ylab = "Accuracy level" , xlim = c(1,85), col = "red")
+
+```
+
+```{r}
+k = 61
+knn.56 = knn(train = train.all,test = test.all,cl=train.labels,k=k)
+accuracy =  100* sum(test.labels == knn.56)/NROW(test.labels)
+confusionMatrix(table(knn.56,test.labels))
+```
+
+```{r}
+data = read.csv('popularity_songs.csv')
+correlationMatrix = cor(data[,c(4,12:23)])
+print(correlationMatrix)
+highlyCorrelated = findCorrelation(correlationMatrix, cutoff=0.6)
+print(highlyCorrelated)
+```
+

@@ -1,0 +1,182 @@
+---
+title: "Spotify by the Decades"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+```{r message=FALSE, warning=FALSE, include=FALSE}
+devtools::install_github('charlie86/spotifyr')
+library(dplyr)
+
+library(plotly)
+library(ggplot2)
+
+library(spotifyr)
+library(shiny)
+```
+
+
+```{r include=FALSE}
+#Sys.setenv(SPOTIFY_CLIENT_ID = 'e0fd517f76594907a89ee10ab5ce5a68')
+#Sys.setenv(SPOTIFY_CLIENT_SECRET = '24c0ca95f58c4c0d8d645c691a26dd50')
+
+id <- 'e0fd517f76594907a89ee10ab5ce5a68'
+secret <- '24c0ca95f58c4c0d8d645c691a26dd50'
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+
+access_token <- get_spotify_access_token()
+
+```
+
+
+```{r include=FALSE}
+my_id <- 'spotify' ### spotify universal id
+spot_playlist <- get_user_playlists(my_id)
+```
+
+```{r echo=FALSE}
+playList <- get_user_playlists(my_id, offset = 0,
+  authorization = get_spotify_authorization_code(),
+  include_meta_info = FALSE)
+
+playList <- playList %>% filter(name %in% c('All Out 60s', 'All Out 70s', 'All Out 80s', 'All Out 90s','All Out 00s'))
+
+#playList
+#colnames(playList)
+
+top_n <- floor(100/nrow(playList))
+
+
+tracks <- 0
+
+for (i in 1:nrow(playList)){
+  tracks <- rbind(tracks,cbind(get_playlist_tracks(playList[i,"id"])[1:top_n,],
+                               playlist_name=playList[i,"name"] ))}
+
+tracks <- tracks[0:-1,]#remove 0 row
+
+#colnames(tracks)
+#tracks[,41]
+
+features <- get_track_audio_features(tracks[,"track.id"])
+
+tracks_features <- tracks %>% 
+  left_join(rename(features,track.uri=uri),by="track.uri")
+
+
+#colnames(tracks_features)
+#tracks_features
+```
+
+
+Tab 1
+=======================================================================
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Correlations Between Audio Features
+
+```{r echo=FALSE}
+library("viridis")
+
+
+library(corrplot)
+
+col3 <- colorRampPalette(c("#7F0000", "red", "#FF7F00", "yellow", "#7FFF7F",
+                           "cyan", "#007FFF", "blue", "#00007F"))
+
+ui<- fluidPage(
+  sidebarLayout(
+     radioButtons("typeInput", "Decade",
+                  choices = c("All Out 60s", "All Out 70s", "All Out 80s", "All Out 90s", "All Out 00s"),
+                  selected = "All Out 00s"),
+    mainPanel(plotOutput("corrplot"), br(), br(),
+      tableOutput("results"))
+  )
+)
+
+server <- function(input, output){
+  output$corrplot <- renderPlot({
+    
+  filtered <-
+    tracks_features %>%
+    filter(playlist_name == input$typeInput
+    )
+  
+  
+  tf_correlations <- cor(filtered[,c(42,43,45,47:51)])
+  corrplot.mixed(tf_correlations,lower.col = "black", upper.col= col3(10))
+})
+}
+
+shinyApp(ui = ui, server = server)
+
+```
+
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### Density Plots of Decades
+
+```{r}
+library(plotly)
+
+ui<- fluidPage(
+  sidebarLayout(
+     radioButtons("typeInput", "Decade ",
+                  choices = c("All Out 60s", "All Out 70s", "All Out 80s", "All Out 90s", "All Out 00s")
+    ),
+    mainPanel(plotOutput("densplot"), br(), br(),
+      tableOutput("results"))
+  )
+)
+
+server <- function(input, output){
+  output$densplot <- renderPlot({
+    
+  filtered <-
+    tracks_features %>%
+    filter(playlist_name == input$typeInput
+    )
+
+correlated_density <- ggplot(filtered) + geom_density(aes(energy,fill="energy", alpha = 0.1))+ geom_density(aes(danceability,fill="danceability", alpha = 0.1))+ geom_density(aes(liveness,fill="loudness", alpha = 0.1))+ labs(x="Energy,Danceability,Loudness", y="Density", alpha = 0.1) +
+  guides(fill=guide_legend(title="Playlist"))+
+  theme_minimal()+ scale_color_viridis(discrete=TRUE)
+
+correlated_density
+
+})
+}
+
+shinyApp(ui = ui, server = server)
+```
+
+
+
+### Chart C
+
+```{r}
+mood_Feel <- ggplot(data = tracks_features, aes(x = valence, y = energy, color = playlist_name)) +geom_point(aes(text=track.name)) + geom_jitter() + geom_vline(xintercept = 0.5) + geom_hline(yintercept = 0.5) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  annotate('text', 0.25 / 2, 0.95, label = "Loud/Aggressive", fontface =
+             "bold") +
+  annotate('text', 1.75 / 2, 0.95, label = "Happy/FeelGood", fontface = "bold") +
+  annotate('text', 1.75 / 2, 0.05, label = "Relaxed/Peaceful", fontface =
+             "bold") +
+  annotate('text', 0.25 / 2, 0.05, label = "Sad/Downbeat", fontface =
+             "bold")
+
+
+ggplotly(mood_Feel,tooltip=c("text"))
+
+```
+

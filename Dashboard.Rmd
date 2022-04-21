@@ -1,0 +1,792 @@
+---
+title: "Spotify Project"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    theme: sandstone
+runtime: shiny
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+library(flexdashboard)
+devtools::install_github('charlie86/spotifyr')
+library(ggplot2)
+library(dplyr)
+library(datasets)
+library(data.table)
+library(DT)
+library(spotifyr)
+library(plotly)
+library(shiny)
+library(caret)
+```
+```{r, include= FALSE}
+library(RCurl)
+x <- url("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/popularity_songs.csv?token=AAACJKAQOESJUEOY2BIX6L3ASLG4W")
+genre_data <- read.csv(x)
+#genre_data = read.csv("popularity_songs.csv")
+id <- 'e0fd517f76594907a89ee10ab5ce5a68'
+secret <- '24c0ca95f58c4c0d8d645c691a26dd50'
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+access_token <- get_spotify_access_token()
+```
+
+
+```{r include=FALSE}
+my_id <- 'spotify' ### spotify universal id
+spot_playlist <- get_user_playlists(my_id)
+```
+
+```{r echo=FALSE}
+library("viridis") 
+playList <- get_user_playlists(my_id, offset = 0,
+  authorization = get_spotify_authorization_code(),
+  include_meta_info = FALSE)
+playList <- playList %>% filter(name %in% c('All Out 60s', 'All Out 70s', 'All Out 80s', 'All Out 90s','All Out 00s'))
+#playList
+#colnames(playList)
+top_n <- floor(100/nrow(playList))
+tracks <- 0
+for (i in 1:nrow(playList)){
+  tracks <- rbind(tracks,cbind(get_playlist_tracks(playList[i,"id"])[1:top_n,],
+                               playlist_name=playList[i,"name"] ))}
+tracks <- tracks[0:-1,]#remove 0 row
+#colnames(tracks)
+#tracks[,41]
+features <- get_track_audio_features(tracks[,"track.id"])
+tracks_features <- tracks %>% 
+  left_join(rename(features,track.uri=uri),by="track.uri")
+#tracks_features
+```
+
+
+By Decade
+======================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+### **Select Input**
+Select the specific Audio Feature you would like to see be compared by decades in Audio Feature Analysis
+
+### **Radio Buttons**
+Use radio buttons to select a specific decade in Key Differences
+
+```{r}
+library(corrplot)
+
+selectInput('feature', 'Feature', choices = c("Acousticness" = 'acousticness',"Danceability" = 'danceability',"Energy" = 'energy','Instrumentalness' = 'instrumentalness', 'Loudness'= 'loudness', 'Speechiness' = 'speechiness', "Popularity"= 'track.popularity'))
+
+radioButtons("typeInput", "Decade",
+                  choices = c("All Out 60s", "All Out 70s", "All Out 80s", "All Out 90s", "All Out 00s"),
+                  selected = "All Out 00s")
+
+```
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Audio Feature Analysis 
+
+#### Difference in Features
+```{r}
+tracks_features2 <- tracks_features%>%
+  mutate(difference=speechiness-0.33)
+
+
+choose_feat= reactive({
+  tracks_features2 %>%
+   mutate(value=tracks_features[[input$feature]])
+})
+data_feats = reactive({
+  ggplot(choose_feat
+        (), 
+    aes(x=reorder(track.name, value),
+    y=value,
+    fill=playlist_name,
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               input$feature, value
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_color_viridis(discrete=TRUE) +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab(input$feature) +
+        facet_wrap(~ playlist_name) +
+        ggtitle(input$feature)
+})
+
+```
+
+<div style="height:275px;">
+```{r}
+
+renderPlot(data_feats())
+```
+</div>
+
+#### Musical Key Percentage by Playlist
+
+```{r}
+
+key_dec <- tracks_features%>%
+  select(playlist_name, key)%>%
+  group_by(playlist_name, key)%>%
+  mutate(n=n())%>%
+  unique()%>%
+  group_by(key)%>%
+  mutate(total=sum(n))%>%
+  mutate(percent=round((n/total)*100))
+
+#head(key_dec, 10)
+vis2 <- ggplot(key_dec, aes(x=key, fill=playlist_name, y = n, 
+                                text = paste("Number of Songs: ", n, "<br>",
+                                            "Percent Songs in Key: ", percent, "%")))+
+  geom_bar(position="fill", width=0.5, stat = "identity")+
+  scale_color_viridis()+
+  labs(x="Key", y="Percent of Songs")+
+  guides(fill=guide_legend(title="Playlist"))+
+  theme_minimal()
+```
+
+<div style="height:250px;">
+```{r}
+ggplotly(vis2, tooltip=c("text"))
+```
+
+</div>
+
+
+### Key Differences
+
+#### Correlations
+
+<div style="height:275px;">
+```{r}
+library(corrplot)
+
+col3 <- colorRampPalette(c("#7F0000", "red", "#FF7F00", "yellow", "#7FFF7F",
+                           "cyan", "#007FFF", "blue", "#00007F"))
+renderPlot({
+    
+  filtered <-
+    tracks_features %>%
+    filter(playlist_name == input$typeInput
+    )
+  
+  
+  tf_correlations <- cor(filtered[,c(42,43,45,47:51)])
+  
+  corrplot.mixed(tf_correlations,lower.col = "black", upper.col= col3(10),mar=c(0,0,1,0),height=300)
+})
+
+
+```
+</div>
+
+#### Densities
+
+```{r}
+library(plotly)
+filtered2 <-
+    reactive({tracks_features %>%
+    filter(playlist_name == input$typeInput
+    )})
+
+filtered2 <-
+    reactive({tracks_features %>%
+    filter(playlist_name == input$typeInput
+    )})
+
+correlated_density <- reactive({ggplot(filtered2()) + geom_density(aes(energy,fill="energy", alpha = .1))+ geom_density(aes(danceability,fill="danceability", alpha = 0.1)) + geom_density(aes(scale(loudness,center=-30),fill="loudness", alpha = .1))+ labs(x="Energy,Danceability, Loudness", y="Density", alpha = .1) + guides(fill=guide_legend(title="Playlist"))+
+  theme_minimal()+  scale_color_viridis(discrete=TRUE)})
+```
+
+<div style="height:275px;">
+```{r}
+renderPlot(correlated_density(),height=200)
+```
+
+</div>
+
+### Mood
+
+```{r}
+mood_Feel <- ggplot(data = tracks_features, aes(x = valence, y =energy , color = playlist_name)) +geom_point(aes(text=track.name)) + geom_jitter() + geom_vline(xintercept = 0.5) + geom_hline(yintercept = 0.5) +
+  scale_x_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  annotate('text', 0.25 / 2, 0.95, label = "Loud/Aggressive", fontface =
+             "bold") +
+  annotate('text', 1.75 / 2, 0.95, label = "Happy/FeelGood", fontface = "bold") +
+  annotate('text', 1.75 / 2, 0.05, label = "Relaxed/Peaceful", fontface =
+             "bold") +
+  annotate('text', 0.25 / 2, 0.05, label = "Sad/Downbeat", fontface =
+             "bold")
+ggplotly(mood_Feel,tooltip=c("text"))
+```
+
+
+By Country
+======================================================================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+### **Top Charts by Country**
+Using Spotify's Top Charts playlists for Global, USA, Australia, Japan, and Italy, we try to find characteristics of Top Charts and compare different countries' Top Charts. **Spotify Top Charts are updated frequently, so results are subject to change.**
+
+#### **Data Exploration**
+Quickly visualizing the data, we did basic plots of each feature of interest by country. Additionally, we looked at a correlation plot and box plot of the different features.
+
+#### **Clustering**
+We ran k-means clustering to find the audio profiles of top charts songs. The initial optimal $k$ was 6 clusters, however we decided upon the second best, $k$=2 clusters upon further analysis. The 6 clusters did not develop unique audio profiles, and clusters were prone to having a small number of songs. Since songs can exist in multiple countries' top charts playlists, this may result in a cluster consisting of a single song. We used radar charts to visualize the audio profiles.
+
+We also plotted a features matrix color coded by country, which gave us insight on how countries' top charts compared.
+
+#### **Tukey's Test**
+Running ANOVA and Tukey's test, we find that features "danceability" and "loudness" were most different among groups, and Japan in particular was the most different from other countries.
+
+### **Conclusions**
+Similarities were found between the Global, US, and Italy top charts, primarily between Global and US top charts, with Japan’s top charts being most different. This may support that popular US songs are highly influential in the global music industry, while Japan's is fairly isolated.
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Report Appendix
+The Report Appendix contains images of data taken at the time of the report (March 2021), and are not necessarily reflective of Spotify's current Top Charts. To read more on the meaning of the features, please refer to Spotify's API page.
+
+<div id="section-top"></div>
+**Contents**
+
+* [Data Exploration](#data-exploration)
+
+* [Clustering](#clustering)
+
+* [Tukey's Tests](#tukeys)
+
+```{r}
+# selectInput('category', 'Section', choices = c("Data Exploration" = 'Data Exploration',"Clustering" = 'Clustering',"Tukey's" = 'Tukeys'))
+# 
+# selected = reactive(input$category)
+```
+
+**Data Exploration**
+
+$\textsf{Clustering output from NbClust:}$
+<div>
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/NumClusters_Dindex.png?token=AAACJKEG2CFQPUMH6EWBF2DASIWFQ")
+# reactive(if (selected() == "Data Exploration") {
+# knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/NumClusters_Dindex.png?token=AAACJKEG2CFQPUMH6EWBF2DASIWFQ")
+# })
+```
+
+$\textsf{Normalized Features Boxplot}$
+```{r, echo=F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/FeaturesBoxplot_Norm.png?token=AAACJKDVCHLEEDRARGNFY4DASJQYK")
+```
+
+---
+
+$\textsf{Acousticness by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Acousticness.png?token=AAACJKGKG4ZJQR5Y3OKI4ADASJQ4E")
+```
+
+---
+
+$\textsf{Danceabiility by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Danceability.png?token=AAACJKAAZECGMNAKSEBPBMTASJRB2")
+```
+
+---
+
+$\textsf{Energy by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Energy.png?token=AAACJKCNPDBYVWZ52FFQDXTASJRE4")
+```
+
+---
+
+$\textsf{Instrumentalness by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Instrumentalness.png?token=AAACJKDWKRFOPRSSBMO2SKTASJRF4")
+```
+
+---
+
+$\textsf{Loudness by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Loudness.png?token=AAACJKFESIGVUPFGSYBNTILASJRIA")
+```
+
+---
+
+$\textsf{Popularity by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Popularity.png?token=AAACJKFA45WNXFVJELMET6DASJRKK")
+```
+
+---
+
+$\textsf{Speechiness by Country}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Speechiness.png?token=AAACJKCCJ6ES7LCJSFFDNRLASJRMG")
+```
+
+---
+
+<div id="section-clustering"></div>
+**Clustering**
+
+$\textsf{Optimal clusters}$
+```{r, echo=F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/NumClusters_Chosen.png?token=AAACJKDVSWYLUMVVVXSVC5LASIWGG")
+```
+
+---
+
+$\textsf{Cluster Plot, }k=6$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/PCClusterPlot_6.png?token=AAACJKGS26UEFRRIFYQPDWLASJCFM")
+```
+
+---
+
+$\textsf{Cluster Plot, }k=2$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/PCClusterPlot_2.png?token=AAACJKC2ZIZIRWGI7MVURHDASJCA6")
+```
+
+---
+
+$\textsf{Cluster 1 Radar Plot, }k=2$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/RadarCluster_2_1.png?token=AAACJKCAPSYK636GZCJGTFDASJOPS")
+```
+
+---
+
+$\textsf{Cluster 2 Radar Plot, }k=2$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/RadarCluster_2_2.png?token=AAACJKCJEO65DQOBVPOTK5TASJOQA")
+```
+
+---
+
+$\textsf{Features Matrix by Cluster, }k=2$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/FeaturesPlot_byClusters_2.png?token=AAACJKAUBC44DABKMCL3SY3ASJPFI")
+```
+
+---
+
+$\textsf{Features Matrix by Country}$
+Black is `Global`, Red is `USA`, Green is `Australia`, Blue is `Japan`, Cyan is `Italy`
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/FeaturesPlot_byCountry.png?token=AAACJKH42DUH5KFZDK7BZBDASJORW")
+```
+
+---
+
+<div id="section-tukeys"></div>
+**Tukey's Tests** 
+
+---
+
+$\textsf{Tukey's Test for Acousticness}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Tukey_Acousticness.png?token=AAACJKBO77UQ3PFTQ6DG6EDASLGL4")
+```
+
+---
+
+$\textsf{Tukey's Test for Danceability}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Tukey_Danceability.png?token=AAACJKEAC5QGZXCAOZPPIG3ASLGTI")
+```
+
+---
+
+$\textsf{Tukey's Test for Loudness}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Tukey_Loudness.png?token=AAACJKAXSR4L3RY6LBYOQMLASLGV6")
+```
+
+---
+
+$\textsf{Tukey's Test for Tempo}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Tukey_Tempo.png?token=AAACJKEUX7VGGUS73MESUW3ASLGYK")
+```
+
+---
+
+$\textsf{Tukey's Test for Valence}$
+```{r, echo = F}
+knitr::include_graphics("https://raw.github.tamu.edu/finvedy/SpotifyDataAnalysis/master/figures/Tukey_Valence.png?token=AAACJKE4PIEFZSAKUNIQ7JLASLG2I")
+```
+
+---
+
+</div>
+### Data Exploration
+
+#### Audio Features by Country
+The following plots use current Spotify Top Charts data, and may not reflect parts of our report, which was done March 2021. 
+
+```{r}
+spot_id <- "spotifycharts" # official spotify charts
+spot_playlists <- get_user_playlists(spot_id) # empty list; no accessible playlists
+# URIs for spotifycharts playlists
+Top_Songs_Global    <- list(id="37i9dQZEVXbNG2KDcFcKOF", 
+                            name="Top Songs Global")
+Top_Songs_USA       <- list(id="37i9dQZEVXbLp5XoPON0wI", 
+                            name="Top Songs USA")
+Top_Songs_Australia <- list(id="37i9dQZEVXbK4fwx2r07XW", 
+                            name="Top Songs Australia")
+Top_Songs_Japan     <- list(id="37i9dQZEVXbKqiTGXuCOsB", 
+                            name="Top Songs Japan")
+Top_Songs_Italy     <- list(id="37i9dQZEVXbJUPkgaWZcWG", 
+                            name="Top Songs Italy")
+Top_Songs <- list(ids=c(Top_Songs_Global$id, Top_Songs_USA$id, Top_Songs_Australia$id, Top_Songs_Japan$id, Top_Songs_Italy$id),
+                  names=c(Top_Songs_Global$name, Top_Songs_USA$name, Top_Songs_Australia$name, Top_Songs_Japan$name, Top_Songs_Italy$name))
+top_playlists_features <- get_playlist_audio_features(spot_id, Top_Songs$ids)
+selectInput('feature', 'Feature', choices = c("Acousticness" = 'acousticness',"Danceability" = 'danceability',"Energy" = 'energy','Instrumentalness' = 'instrumentalness', 'Loudness'= 'loudness', 'Speechiness' = 'speechiness', "Popularity"= 'track.popularity'))
+```
+
+```{r, context="server"}
+# output$box1 = renderValueBox({
+#   valueBox(format(mean(mtcars2$mpg),digits=3), icon = "fa-users")
+# })
+```
+
+```{r}
+chosen_feature = reactive({
+  top_playlists_features %>%
+   mutate(value=top_playlists_features[[input$feature]])
+})
+chosen_plot = reactive({
+  ggplot(chosen_feature(), 
+    aes(x=reorder(track.name, value),
+    y=value,
+    fill=playlist_name,
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               input$feature, value
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab(input$feature) +
+        facet_wrap(~ playlist_name) +
+        ggtitle(input$feature)
+})
+```
+
+<div style="height: 300px;">
+```{r features, echo=F}
+renderPlot(chosen_plot())
+# renderPlot({par(mar = c(5.1, 4.1, 0, 1))
+#   plot(chosen_plot())
+#        })
+```
+</div>
+
+#### Correlation
+
+```{r}
+library(corrplot)
+library(tibble)
+cluster_features = c("acousticness", "danceability", "energy", "instrumentalness", "speechiness", "loudness", "valence", "tempo", "track.popularity", "playlist_name", "track.name")
+top_playlists_select_features <- top_playlists_features[cluster_features]
+top_playlists_select_features$playlist_name <- as.factor(top_playlists_select_features$playlist_name) # making it a factor column
+levels(top_playlists_select_features$playlist_name) <- c(1:length(Top_Songs$ids)) # translating playlist names into numbers
+top_playlists_select_features$playlist_name <- as.numeric(top_playlists_select_features$playlist_name) # making factor to numeric
+cor_mat <- cor(top_playlists_select_features[,-11])
+#countries_corrplot <- corrplot(cor_mat)
+# without last columns (playlist/track name)
+norm <- as.data.frame(sapply(top_playlists_select_features[,c(-10,-11)], scale))   #Normalized Numerical Data
+# add columns back
+norm <- norm %>% add_column(playlist_name = top_playlists_select_features$playlist_name) 
+norm <- norm %>% add_column(track.name = top_playlists_select_features$track.name)
+```
+<div>
+```{r corrplot, echo = F}
+countries_corrplot <- corrplot(cor_mat)
+renderPlot(plot(countries_corrplot)
+       )
+```
+</div>
+
+### Clustering
+The following plots use current Spotify Top Charts data, and may not reflect parts of our report, which was done March 2021. 
+
+<div>
+```{r}
+library(NbClust)
+library(cluster)
+# Determining number of clusters
+n_clusters <- NbClust(norm[,c(-10,-11)], distance='euclidean', max.nc=9, method="kmeans")
+barplot(table(n_clusters$Best.nc[1,]), xlab="# of clusters", ylab="# of criteria",
+        main="# of clusters chosen")
+# Perform k-means cluster
+fit.km <- kmeans(norm[,c(-10,-11)], 2, nstart=40, iter.max = 30)
+cluster <- fit.km$cluster
+fit.km$centers         # centers
+fit.km$totss           # total sum of squares
+fit.km$withinss        # cluster sum of squares
+fit.km$tot.withinss    # total cluster sum of squares
+fit.km$betweenss       # between clusters sum of squares
+fit.km$size            # size of clusters
+cluster1 = norm[cluster == 1,]
+cluster2 = norm[cluster == 2,]
+if(FALSE){
+cluster3 = norm[cluster == 3,]
+cluster4 = norm[cluster == 4,]
+cluster5 = norm[cluster == 5,]
+cluster6 = norm[cluster == 6,]
+}
+```
+</div>
+
+```{r cluster3}
+library(fmsb)
+# Visualizing clusters
+plot(norm[,-11], col=cluster)
+plot(norm[,-11], col=norm$playlist_name)
+# Cluster Plot against 1st 2 principal components
+clusplot(top_playlists_select_features[,-11], cluster, color=TRUE, shade=TRUE,
+         labels=3)
+# Radar Plot Function
+f_radarplot_cluster = function(i_cluster, o_radarplot, clustername="") {
+  max = max(i_cluster["acousticness"])
+  min = min(i_cluster["acousticness"])
+  for (col in colnames(i_cluster)[-1]) {
+    max = c(max, max(i_cluster[col]))
+    min = c(min, min(i_cluster[col]))
+  }
+  cluster_avg = apply(i_cluster, 2, mean)
+  cluster_avg <- as.data.frame(rbind(max, min, cluster_avg))
+  title = paste(clustername, "Radar Plot")
+  o_radarplot = radarchart(cluster_avg, title=title)
+}
+radarplot1 = 0
+f_radarplot_cluster(cluster1[,c(-10,-11)], radarplot1, "Cluster 1")
+radarplot2 = 0
+f_radarplot_cluster(cluster2[,c(-10,-11)], radarplot2, "Cluster 2")
+if (FALSE) {
+radarplot3 = 0
+f_radarplot_cluster(cluster3[,c(-10,-11)], radarplot3, "Cluster 3")
+radarplot4 = 0
+f_radarplot_cluster(cluster4[,c(-10,-11)], radarplot4, "Cluster 4")
+radarplot5 = 0
+f_radarplot_cluster(cluster5[,c(-10,-11)], radarplot5, "Cluster 5")
+radarplot6 = 0
+f_radarplot_cluster(cluster6[,c(-10,-11)], radarplot6, "Cluster 6")
+}
+```
+
+### Tukey's
+The following plots use current Spotify Top Charts data, and may not reflect parts of our report, which was done March 2021. 
+```{r}
+library(multcompView)
+norm2 <- norm
+norm2$playlist_name <- as.factor(norm2$playlist_name) # making it a factor column
+levels(norm2$playlist_name) <- Top_Songs$names # translating playlist names into numbers
+mod_acousticness = lm(norm2$acousticness ~ as.factor(norm2$playlist_name))
+anova_acousticness = anova(mod_acousticness)
+aov_acousticness = aov(norm2$acousticness ~ as.factor(norm2$playlist_name))
+tukey_acousticness = TukeyHSD(x=aov_acousticness, 'as.factor(norm2$playlist_name)', conf.level=0.95)
+mod_danceability = lm(norm2$danceability ~ as.factor(norm2$playlist_name))
+anova_danceability = anova(mod_danceability)
+aov_danceability = aov(norm2$danceability ~ as.factor(norm2$playlist_name))
+tukey_danceability = TukeyHSD(x=aov_danceability, 'as.factor(norm2$playlist_name)', conf.level=0.95)
+mod_loudness = lm(norm2$loudness ~ as.factor(norm2$playlist_name))
+anova_loudness = anova(mod_loudness)
+aov_loudness = aov(norm2$loudness ~ as.factor(norm2$playlist_name))
+tukey_loudness = TukeyHSD(x=aov_loudness, 'as.factor(norm2$playlist_name)', conf.level=0.95)
+mod_tempo = lm(norm2$tempo ~ as.factor(norm2$playlist_name))
+anova_tempo = anova(mod_tempo)
+aov_tempo = aov(norm2$tempo ~ as.factor(norm2$playlist_name))
+tukey_tempo = TukeyHSD(x=aov_tempo, 'as.factor(norm2$playlist_name)', conf.level=0.95)
+mod_valence = lm(norm2$valence ~ as.factor(norm2$playlist_name))
+anova_valence = anova(mod_valence)
+aov_valence = aov(norm2$valence ~ as.factor(norm2$playlist_name))
+tukey_valence = TukeyHSD(x=aov_valence, 'as.factor(norm2$playlist_name)', conf.level=0.95)
+plot(tukey_acousticness, las=1, col="brown", sub="acousticness")
+plot(tukey_danceability, las=1, col="brown", sub="danceability")
+plot(tukey_loudness, las=1, col="brown", sub="loudness")
+plot(tukey_tempo, las=1, col="brown", sub="tempo")
+plot(tukey_valence, las=1, col="brown", sub="valence")
+```
+
+
+By Genre
+======================================================================
+Column {.tabset}
+-----------------------------------------------------------------------
+### Duration Boxplot
+```{r} 
+plotOutput("plot1")
+```
+
+```{r, context="server"}
+output$plot1 = renderPlot({
+  ggplot(genre_data,aes(duration_ms))+
+    geom_boxplot()+
+    xlab("Duration ms")
+}) 
+```
+
+### Duration Boxplot No Outlier
+
+```{r} 
+plotOutput("plot2")
+duration_outliers <- boxplot(genre_data$duration_ms,plot = FALSE, range = 4)$out
+##removed outlier songs that are too long
+playlist_songs_no_outliers <- genre_data %>%
+  filter(!duration_ms %in% duration_outliers)
+```
+
+```{r, context="server"}
+output$plot2 = renderPlot({
+  ggplot(playlist_songs_no_outliers,aes(duration_ms))+
+    geom_boxplot()+
+    xlab("Duration ms")
+}) 
+```
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Popularity Histogram
+
+```{r} 
+plotlyOutput("plotly1")
+```
+
+```{r, context="server"}
+output$plotly1 = renderPlotly({
+ggplotly(ggplot(playlist_songs_no_outliers)+
+           geom_histogram(aes(track.popularity)))
+})  
+```
+
+### Popularity Histogram (popularity > 3)
+
+```{r}
+plotlyOutput("plotly2")
+playlist_songs_no_outliers2 <- playlist_songs_no_outliers %>%
+  filter(!track.popularity <3)
+```
+
+```{r, context="server"}
+output$plotly2 =renderPlotly({
+ ggplotly(ggplot(playlist_songs_no_outliers2)+
+           geom_histogram(aes(track.popularity)))
+})
+ 
+```
+
+
+
+KNN example
+=======================================================================
+
+
+Column 
+-----------------------------------------------------------------------
+
+```{r}
+library(class)
+set.seed(2021) ##setting seed for sample
+playlist_features = playlist_songs_no_outliers2[,c(4,10,12:14,16:23)]
+dat.d = sample(1:nrow(playlist_features),size = nrow(playlist_features)*.8,replace = FALSE)## random selection of 80 %
+normalize = function(x){
+  return ((x-min(x))/(max(x)-min(x))) }
+all.subset.normal = as.data.frame(lapply(playlist_songs_no_outliers2[,c(4,12:14,16:23)],normalize))
+train.all = all.subset.normal[dat.d,] ##training 80% of data
+test.all = all.subset.normal[-dat.d,]# remaining data
+train.labels = playlist_songs_no_outliers2[dat.d,10]
+test.labels =playlist_songs_no_outliers2[-dat.d,10]
+train.labels= as.factor(train.labels)
+test.labels =as.factor(test.labels)
+train.all$labels = train.labels
+test.all$labels = test.labels
+grid = expand.grid(k = c(55:75))
+ctrl <- trainControl(method = "cv", number= 3, search = 'grid')
+kNNFit2 <- train(labels ~ ., 
+                data = train.all,
+                method = "knn",
+                trControl = ctrl,
+                tuneGrid = grid)
+print(kNNFit2)
+```
+
+Column
+-----------------------------------------------------------------------
+
+ 
+```{r}
+highlight_df <- kNNFit2$results %>% 
+             filter(Accuracy >= .445)
+ggplot(kNNFit2)+
+  ggtitle("K Accuracy Plot")+
+  geom_point(data=highlight_df, 
+             aes(x=k,y=Accuracy), 
+             color='maroon',shape = "*",
+             size=15)+
+  xlab("K - Neighbors")+
+  ylab("Accuracy (Cross-Validation)")
+```
+<!-- Change the orientation to rows -->
+ 
+
+About
+=======================================================================
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Methodology
+
+#### Data Source
+- Spotify API with Spotifyr package
+ 
+#### Methods
+Our approach involved several statistical methods such as: K-means Clustering, K-Nearest Neighbors, ANOVA, Tukey's, and more.
+
+### About Us
+
+#### Summary
+We are a group of graduating senior statisticians at Texas A&M University. Our fascination in music led us to exploring the connections between audio features, geographic locations, genres, and time.
+
+#### Team Members
+- Larissa Campos
+- Marcos Hernandez Vega
+- Felicia Invedy
+- Cesar Valenzuela
+
+```{r global, include=FALSE}
+# load data in 'global' chunk so it can be shared by all users of the dashboard
+```

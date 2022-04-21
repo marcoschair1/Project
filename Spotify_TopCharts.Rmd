@@ -1,0 +1,408 @@
+---
+title: "Countries' Spotify Top Charts"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r lib}
+library(dplyr)
+library(tibble)
+library(spotifyr)
+library(plotly)
+library(ggplot2)
+library(corrplot)
+library(NbClust)
+library(cluster) 
+library(fmsb)
+```
+
+### Set up API
+```{r api}
+id <- 'c5d2eae57dcc4e6b90f7711c749cd61a'
+secret <- '3e78b4312da44dd58cd535ad2fdf24ff'
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+access_token <- get_spotify_access_token()
+
+# R Studio's redirect uri 'http://localhost:1410' must be in Spotify settings
+```
+
+### Spotify Tracks
+Spotifyr documentation can be found [here](https://www.rdocumentation.org/packages/spotifyr/versions/2.1.1).
+Spotify top chart playlists can be found [here](https://open.spotify.com/genre/browse-charts-tab). 
+
+User ID "spotifycharts" holds top charts playlists, however, the playlists are not accessible through the api, so we must use URIs.
+```{r init}
+spot_id <- "spotifycharts" # official spotify charts
+spot_playlists <- get_user_playlists(spot_id) # empty list; no accessible playlists
+
+# URIs for spotifycharts playlists
+Top_Songs_Global    <- list(id="37i9dQZEVXbNG2KDcFcKOF", 
+                            name="Top Songs Global")
+Top_Songs_USA       <- list(id="37i9dQZEVXbLp5XoPON0wI", 
+                            name="Top Songs USA")
+Top_Songs_Australia <- list(id="37i9dQZEVXbK4fwx2r07XW", 
+                            name="Top Songs Australia")
+Top_Songs_Japan     <- list(id="37i9dQZEVXbKqiTGXuCOsB", 
+                            name="Top Songs Japan")
+Top_Songs_Italy     <- list(id="37i9dQZEVXbJUPkgaWZcWG", 
+                            name="Top Songs Italy")
+
+Top_Songs <- list(ids=c(Top_Songs_Global$id, Top_Songs_USA$id, Top_Songs_Australia$id, Top_Songs_Japan$id, Top_Songs_Italy$id),
+                  names=c(Top_Songs_Global$name, Top_Songs_USA$name, Top_Songs_Australia$name, Top_Songs_Japan$name, Top_Songs_Italy$name))
+
+top_playlists_features <- get_playlist_audio_features(spot_id, Top_Songs$ids)
+                              
+(head(top_playlists_features, 1))
+```
+
+Determining Feature Importance
+https://machinelearningmastery.com/feature-selection-with-the-caret-r-package/
+
+
+```{r feat}
+# features of interest
+acousticness <- top_playlists_features %>%
+  mutate(value=acousticness)
+
+danceability <- top_playlists_features %>%
+  mutate(value=danceability)
+
+energy <- top_playlists_features %>%
+  mutate(value=energy)
+
+instrumentalness <- top_playlists_features %>%
+  mutate(value=instrumentalness)
+
+liveness <- top_playlists_features %>%
+  mutate(value=liveness)
+
+loudness <- top_playlists_features %>%
+  mutate(value=loudness)
+
+popularity <- top_playlists_features %>%
+  mutate(value=track.popularity)
+
+speechiness <- top_playlists_features %>%
+  mutate(value=speechiness)
+
+tempo <- top_playlists_features %>%
+  mutate(value=tempo)
+
+valence <- top_playlists_features %>%
+  mutate(value=valence)
+
+```
+
+### Plotting/Vizualizing
+```{r plot}
+plot_acousticness <- ggplot(acousticness, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Acousticness:", acousticness
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Acousticness") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Acousticness")
+
+plot_danceability <- ggplot(danceability, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Danceability:", danceability
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Danceability") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Danceability")
+
+plot_energy <- ggplot(energy, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Energy:", energy
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Energy") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Energy")
+
+plot_instrumentalness <- ggplot(instrumentalness, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Instrumentalness:", instrumentalness
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Instrumentalness") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Instrumentalness")
+
+plot_loudness <- ggplot(loudness, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Loudness:", loudness
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Loudness") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Loudness")
+
+plot_speechiness <- ggplot(speechiness, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Speechiness:", speechiness
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Speechiness") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Speechiness")
+
+plot_popularity <- ggplot(popularity, 
+               aes(x=reorder(track.name, value), 
+                   y=value, 
+                   fill=playlist_name, 
+                   text=(paste("Track:", track.name, "<br>",
+                               "Artist:", track.album.artists, "<br>",
+                               "Popularity:", popularity
+                               )
+                         )
+                   )
+               ) +
+        geom_col() +
+        scale_fill_discrete() +
+        theme_minimal() +
+        theme(#axis.title.x = element_blank(),
+              axis.text.x  = element_blank(),
+              axis.ticks.x = element_blank(),
+           #   axis.ticks.y = element_blank(),
+            #  panel.grid.major = element_blank(),
+              legend.position = "none") +
+        ylab("Popularity") +
+        facet_wrap(~ playlist_name) +
+        ggtitle("Popularity")
+
+ggplotly(plot_acousticness, tooltip=c("text"))
+ggplotly(plot_danceability, tooltip=c("text"))
+ggplotly(plot_energy, tooltip=c("text"))
+ggplotly(plot_instrumentalness, tooltip=c("text"))
+ggplotly(plot_loudness, tooltip=c("text"))
+ggplotly(plot_speechiness, tooltip=c("text"))
+ggplotly(plot_popularity, tooltip=c("text"))
+```
+
+```{r plot2}
+cluster_features = c("acousticness", "danceability", "energy", "instrumentalness", "speechiness", "loudness", "valence", "tempo", "track.popularity", "playlist_name", "track.name")
+
+top_playlists_select_features <- top_playlists_features[cluster_features]
+
+top_playlists_select_features$playlist_name <- as.factor(top_playlists_select_features$playlist_name) # making it a factor column
+levels(top_playlists_select_features$playlist_name) <- c(1:length(Top_Songs$ids)) # translating playlist names into numbers
+top_playlists_select_features$playlist_name <- as.numeric(top_playlists_select_features$playlist_name) # making factor to numeric
+
+cor_mat <- cor(top_playlists_select_features[,-11])
+corrplot(cor_mat)
+
+# without last columns (playlist/track name)
+boxplot(top_playlists_select_features[,c(-10,-11)])
+summary(top_playlists_select_features[,c(-10,-11)])
+norm <- as.data.frame(sapply(top_playlists_select_features[,c(-10,-11)], scale))   #Normalized Numerical Data
+
+# add columns back
+norm <- norm %>% add_column(playlist_name = top_playlists_select_features$playlist_name) 
+norm <- norm %>% add_column(track.name = top_playlists_select_features$track.name)
+
+boxplot(norm[,c(-10,-11)])
+summary(norm[,c(-10,-11)])
+```
+
+```{r cluster1}
+# Determining number of clusters
+n_clusters <- NbClust(norm[,c(-10,-11)], distance='euclidean', max.nc=9, method="kmeans")
+barplot(table(n_clusters$Best.nc[1,]), xlab="# of clusters", ylab="# of criteria", 
+        main="# of clusters chosen")
+```
+
+```{r cluster2}
+# Perform k-means cluster
+fit.km <- kmeans(norm[,c(-10,-11)], 2, nstart=40, iter.max = 30)
+
+cluster <- fit.km$cluster
+
+fit.km$centers         # centers
+fit.km$totss           # total sum of squares
+fit.km$withinss        # cluster sum of squares
+fit.km$tot.withinss    # total cluster sum of squares
+fit.km$betweenss       # between clusters sum of squares
+fit.km$size            # size of clusters
+
+cluster1 = norm[cluster == 1,]
+cluster2 = norm[cluster == 2,]
+if(FALSE){
+cluster3 = norm[cluster == 3,]
+cluster4 = norm[cluster == 4,]
+cluster5 = norm[cluster == 5,]
+cluster6 = norm[cluster == 6,]
+}
+```
+
+```{r cluster3}
+# Visualizing clusters 
+plot(norm[,-11], col=cluster)
+plot(norm[,-11], col=norm$playlist_name)
+
+# Cluster Plot against 1st 2 principal components
+clusplot(top_playlists_select_features[,-11], cluster, color=TRUE, shade=TRUE, 
+         labels=3)
+
+# Radar Plot Function 
+f_radarplot_cluster = function(i_cluster, o_radarplot, clustername="") {
+  max = max(i_cluster["acousticness"])
+  min = min(i_cluster["acousticness"])
+  for (col in colnames(i_cluster)[-1]) {
+    max = c(max, max(i_cluster[col]))
+    min = c(min, min(i_cluster[col]))
+  }
+  cluster_avg = apply(i_cluster, 2, mean)
+  cluster_avg <- as.data.frame(rbind(max, min, cluster_avg))
+  title = paste(clustername, "Radar Plot")
+  o_radarplot = radarchart(cluster_avg, title=title)
+}
+
+radarplot1 = 0
+f_radarplot_cluster(cluster1[,c(-10,-11)], radarplot1, "Cluster 1")
+
+radarplot2 = 0
+f_radarplot_cluster(cluster2[,c(-10,-11)], radarplot2, "Cluster 2")
+
+if (FALSE) {
+radarplot3 = 0
+f_radarplot_cluster(cluster3[,c(-10,-11)], radarplot3, "Cluster 3")
+
+radarplot4 = 0
+f_radarplot_cluster(cluster4[,c(-10,-11)], radarplot4, "Cluster 4")
+
+radarplot5 = 0
+f_radarplot_cluster(cluster5[,c(-10,-11)], radarplot5, "Cluster 5")
+
+radarplot6 = 0
+f_radarplot_cluster(cluster6[,c(-10,-11)], radarplot6, "Cluster 6")
+}
+
+```
+
+```{r}
+mod_acousticness = lm(norm$acousticness ~ as.factor(norm$playlist_name))
+anova_acousticness = anova(mod_acousticness)
+aov_acousticness = aov(norm$acousticness ~ as.factor(norm$playlist_name))
+tukey_acousticness = TukeyHSD(x=aov_acousticness, 'as.factor(norm$playlist_name)', conf.level=0.95)
+
+mod_danceability = lm(norm$danceability ~ as.factor(norm$playlist_name))
+anova_danceability = anova(mod_danceability)
+aov_danceability = aov(norm$danceability ~ as.factor(norm$playlist_name))
+tukey_danceability = TukeyHSD(x=aov_danceability, 'as.factor(norm$playlist_name)', conf.level=0.95)
+
+mod_loudness = lm(norm$loudness ~ as.factor(norm$playlist_name))
+anova_loudness = anova(mod_loudness)
+aov_loudness = aov(norm$loudness ~ as.factor(norm$playlist_name))
+tukey_loudness = TukeyHSD(x=aov_loudness, 'as.factor(norm$playlist_name)', conf.level=0.95)
+
+mod_tempo = lm(norm$tempo ~ as.factor(norm$playlist_name))
+anova_tempo = anova(mod_tempo)
+aov_tempo = aov(norm$tempo ~ as.factor(norm$playlist_name))
+tukey_tempo = TukeyHSD(x=aov_tempo, 'as.factor(norm$playlist_name)', conf.level=0.95)
+
+mod_valence = lm(norm$valence ~ as.factor(norm$playlist_name))
+anova_valence = anova(mod_valence)
+aov_valence = aov(norm$valence ~ as.factor(norm$playlist_name))
+tukey_valence = TukeyHSD(x=aov_valence, 'as.factor(norm$playlist_name)', conf.level=0.95)
+```
+
+

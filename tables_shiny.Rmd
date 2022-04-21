@@ -1,0 +1,153 @@
+---
+title: "DataTablesinShiny"
+author: "Cesar Valenzuela"
+date: "April 14, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+
+```{r}
+library(dplyr)
+library(spotifyr)
+library(plotly)
+library(ggplot2)
+library(shiny)
+library(shinydashboard)
+library(maps)
+library(ggiraph)
+library(DT)
+library(tidyverse)
+library(class)
+library(caret)
+library(mlbench)
+```
+
+Setting up connection to Spotify API
+
+```{r}
+id  = 'af1557e4ac604073aef8a63a376da264'
+secret = 'f671186c17a742e7b263b42af196870b'
+Sys.setenv(SPOTIFY_CLIENT_ID = id)
+Sys.setenv(SPOTIFY_CLIENT_SECRET = secret)
+access_token = get_spotify_access_token()
+```
+
+Top Charts Data Table
+
+```{r}
+spot_id <- "spotifycharts" 
+spot_playlists <- get_user_playlists(spot_id) 
+
+Top_Songs_Global    <- list(id="37i9dQZEVXbNG2KDcFcKOF", 
+                            name="Top Songs Global")
+Top_Songs_USA       <- list(id="37i9dQZEVXbLp5XoPON0wI", 
+                            name="Top Songs USA")
+Top_Songs_Australia <- list(id="37i9dQZEVXbK4fwx2r07XW", 
+                            name="Top Songs Australia")
+Top_Songs_Japan     <- list(id="37i9dQZEVXbKqiTGXuCOsB", 
+                            name="Top Songs Japan")
+Top_Songs_Italy     <- list(id="37i9dQZEVXbJUPkgaWZcWG", 
+                            name="Top Songs Italy")
+Top_Songs <- list(ids=c(Top_Songs_Global$id, Top_Songs_USA$id, Top_Songs_Australia$id, Top_Songs_Japan$id, Top_Songs_Italy$id),
+                  names=c(Top_Songs_Global$name, Top_Songs_USA$name, Top_Songs_Australia$name, Top_Songs_Japan$name, Top_Songs_Italy$name))
+top_playlists_features <- get_playlist_audio_features(spot_id, Top_Songs$ids)
+                              
+track_artists = c()
+for(i in 1:nrow(top_playlists_features)){
+  track_artists[i] = top_playlists_features$track.artists[[i]]$name
+}
+
+top_playlists_features = cbind(track_artists, top_playlists_features)
+top_playlists_features = top_playlists_features[order(playlist_name),]
+top_playlists_features = top_playlists_features[,c(1,37,18,3,2,6,21,7:17,20,32,34,38,60:62)]
+
+```
+
+Decades Data Table
+
+```{r}
+my_id <- 'spotify'
+spot_playlist <- get_user_playlists(my_id)
+
+playList <- get_user_playlists(my_id, offset = 0,
+  authorization = get_spotify_authorization_code(),
+  include_meta_info = FALSE)
+playList <- playList %>% filter(name %in% c('All Out 60s', 'All Out 70s', 'All Out 80s', 'All Out 90s','All Out 00s'))
+
+top_n <- floor(100/nrow(playList))
+tracks <- 0
+for (i in 1:nrow(playList)){
+  tracks <- rbind(tracks,cbind(get_playlist_tracks(playList[i,"id"])[1:top_n,],
+                               playlist_name=playList[i,"name"] ))}
+tracks <- tracks[0:-1,]
+
+features <- get_track_audio_features(tracks[,"track.id"])
+tracks_features <- tracks %>% 
+  left_join(rename(features,track.uri=uri),by="track.uri")
+
+track_artists = c()
+for(i in 1:nrow(tracks_features)){
+  track_artists[i] = tracks_features$track.artists[[i]]$name
+}
+
+tracks_features = cbind(track_artists, tracks_features)
+tracks_features = tracks_features[,c(1,19,17,42,2,43:53,59,13,15,20)]
+
+```
+
+Genre Data Table
+
+```{r}
+playlist_songs = read.csv("popularity_songs.csv")
+
+duration_outliers <- boxplot(playlist_songs$duration_ms,plot = FALSE, range = 4)$out
+playlist_songs_no_outliers <- playlist_songs %>%
+  filter(!duration_ms %in% duration_outliers)
+playlist_songs_no_outliers <- playlist_songs_no_outliers %>%
+  filter(!track.popularity <3)
+
+
+```
+
+R shiny code
+
+```{r}
+library(shiny)
+library(DT)
+
+shinyApp(
+  ui=fluidPage(
+    tabsetPanel(
+      tabPanel("Countries Top Charts", "Spotify Countries Top Charts Audio Features", DT::dataTableOutput("table1")),
+      tabPanel("Decades", "Spotify US Decades Audio Features", DT::dataTableOutput("table2")),
+      tabPanel("Genres", "Spotify Genres Audio Features", DT::dataTableOutput("table3"))
+    )
+  ),
+  
+  server = function(input,output) {
+    output$table1 = renderDataTable({
+      top_playlists_features
+    },
+    filter = 'top',
+    rownames = FALSE)
+    output$table2 = renderDataTable({
+      tracks_features
+    },
+    filter = 'top',
+    rownames = FALSE)
+    output$table3 = renderDataTable({
+      playlist_songs_no_outliers
+    },
+    filter = 'top',
+    rownames = FALSE)
+  }
+)
+
+
+```
+
